@@ -12,10 +12,10 @@
     {
       "binding": "DB",
       "database_name": "clinicsync-db",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_id": "9c679b88-426d-4966-a8bd-0bc7b066ba7b",
       "migrations_dir": "migrations",
     },
   ],
   "triggers": { "crons": ["0 3 * * *"] },
-  "vars": { "ALLOW_SIGNUP": "false" },
+  "vars": { "ALLOW_SIGNUP": "true" },
 }
