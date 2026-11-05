@@ -1,0 +1,22 @@
+{
+  "name": "clinicsync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node scripts/local.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/worker.mjs && node --check src/queue.mjs && node --check public/app.js && node --check scripts/local.mjs && node --check scripts/db.mjs",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply clinicsync-db --remote",
+    "configure": "node scripts/configure.mjs",
+    "backup": "node scripts/backup-local.mjs"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10",
+    "wrangler": "4.157.0"
+  }
+}
