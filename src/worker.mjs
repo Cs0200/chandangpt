@@ -1,3 +1,4 @@
+import { careAction, filterCare } from "./care.mjs";
 import {
   AppError,
   fail,
@@ -300,6 +301,7 @@ async function route(req, env) {
       s.events = [];
       delete s.displayKey;
     }
+    filterCare(s, u);
     return json({
       id: row.id,
       slug: row.slug,
@@ -307,6 +309,21 @@ async function route(req, env) {
       state: s,
       now: Date.now(),
     });
+  }
+  if (path === "/api/care" && method === "POST") {
+    const b = await body(req);
+    return json(
+      await mutate(env, u.clinic_id, b.requestId, u.id, (s) => {
+        const result = careAction(s, b, u);
+        event(
+          s,
+          `Optional feature: ${String(b.action).replaceAll("-", " ")} saved.`,
+          u,
+          Date.now(),
+        );
+        return result;
+      }),
+    );
   }
   if (path === "/api/action" && method === "POST") {
     const b = await body(req);

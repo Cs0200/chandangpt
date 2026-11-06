@@ -48,7 +48,7 @@ Explicit limits and exclusions:
 - Daily queue bookings, not fixed appointment time slots. Session hours are informational. Holidays and recurring schedule rules are not yet implemented.
 - Clinic settings, queue, tokens, patient phone numbers and tracking secrets are in one versioned database document per clinic. This keeps the pilot simple and mutations atomic, but is not intended for high-volume workloads. Normalize appointments/audit history before scaling.
 - Tokens are unique within a clinic/day; the counter is shared across doctors. Tracking links identify the actual appointment, including its date.
-- No prescriptions, diagnoses, payments, automatic invoices, SMS, email, WhatsApp, live traffic or background push notifications.
+- No automated prescriptions, online payments, tax invoices, SMS, email, automatic WhatsApp, live traffic or background push notifications. Optional clinician-entered health notes, manual WhatsApp links and medicine receipts are available.
 - No email verification, self-service email password reset, MFA or social login yet. Login email is an identifier, not proof of email ownership. Account recovery is an operator procedure.
 - Subscription status is a manual record and does not automatically lock a clinic out during care.
 - Retry history retains 200 operations per clinic; it is not a permanent financial ledger.
@@ -95,3 +95,13 @@ npx wrangler deploy --dry-run
 Passwords are salted PBKDF2-SHA256 hashes; sessions are random, stored hashed, HTTP-only and SameSite=Strict. Deployed HTTPS cookies are Secure. All writes require a matching Origin and JSON. Patient and display links use high-entropy capability keys in URL fragments, not URL query strings, and pages send `Referrer-Policy: no-referrer`. Anyone holding a patient's link can view that appointment: share it privately. All sensitive API responses use `Cache-Control: no-store`. The backend scopes each staff operation to the authenticated clinic; doctors are further scoped to their assigned doctor profile.
 
 Do not commit `.data`, `.env`, `.dev.vars`, cloud credentials, exported patient data or database backups. The supplied `.gitignore` excludes local data and tool state.
+
+## Optional features
+
+Owner → Settings → Optional features. WhatsApp, health history and dispensary can be enabled independently. All default off for new and existing clinics; disabling preserves records.
+
+- **WhatsApp:** Appointments → WhatsApp. Confirm patient consent and international number, review the generic reminder, then open WhatsApp and manually press Send. No API fees, automated delivery, or sent/delivered claim. Uncheck consent and save to withdraw. Clinical information and billing never enter the message.
+- **Health history:** Owner and assigned doctors can create a stable patient record from an appointment or explicitly link a returning appointment. Shared phone numbers never auto-merge records. Notes record history, reported allergies, clinician-entered medicines/instructions, and follow-up. Notes are append-only; corrections are new notes. Reception cannot read clinical notes. Doctors see records linked to their appointments. Public booking/tracking/display responses exclude clinical and stock data.
+- **Dispensary:** Owner adds stock batches with medicine/strength, batch, unit, expiry, quantity and price. Owner/reception dispense multiple items to a named appointment, with a paid/unpaid receipt. Stock deduction and billing are atomic and requests retry safely. Expired or insufficient stock is rejected. Record payment manually; print/save the itemised receipt as PDF. Issued medicines appear in the linked health record.
+- Limits: 2,000 patient records, 200 notes per record, 500 stock batches and 2,000 dispensing bills per clinic. INR only. No GST/tax calculations, discounts, returns/refunds, stock corrections, electronic prescription signing, drug interaction checks or payment gateway. Receipt is not a tax invoice. Confirm clinical instructions outside the software; it does not recommend treatment.
+- No schema migration is needed: optional data is added lazily to existing clinic state. This remains a small pilot, not an audited electronic medical record system. Test with fictional records before using health history with real patients.

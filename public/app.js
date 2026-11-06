@@ -145,15 +145,127 @@ function feed() {
     empty("A fresh start", "Your clinic’s activity will appear here.")
   }</div>`;
 }
+const money = (n) => "₹" + (n / 100).toFixed(2);
+const careButtons = (p) =>
+  `${data.state.features?.whatsapp && me.role !== "doctor" ? btn("WhatsApp", "whatsapp", "", `data-id="${p.id}"`) : ""}${data.state.features?.history && ["owner", "doctor"].includes(me.role) ? btn("Health record", "health", "", `data-id="${p.id}"`) : ""}`;
+function carePage() {
+  return (
+    heading(
+      "Patient health history",
+      "Select an appointment. Returning patients must be explicitly linked to the same patient record.",
+    ) +
+    `<div class="card">${
+      [...data.state.patients]
+        .reverse()
+        .map(
+          (p) =>
+            `<div class="row"><div><strong>${esc(p.name)}</strong><p class="small">${esc(p.date)} · ${esc(p.token)} · ${esc(p.phone)}</p></div>${btn("Open record", "health", "", `data-id="${p.id}"`)}</div><div class="divider"></div>`,
+        )
+        .join("") || empty("No appointments", "Add an appointment first.")
+    }</div>`
+  );
+}
+function healthForm(id) {
+  const p = data.state.patients.find((x) => x.id === id),
+    records = data.state.records || [],
+    r = records.find((x) => x.id === p.recordId);
+  const hidden = `<input type="hidden" name="appointmentId" value="${p.id}">`;
+  const end =
+    '<div class="error"></div><div class="form-actions"><button class="primary">Save</button></div></form>';
+  showModal(
+    "Health history · " + esc(p.name),
+    r
+      ? `<p class="small">Patient ID: ${esc(r.id)} · ${esc(r.reference)}. Confirm identity before adding notes. Saved notes are retained; add a correction as a new note.</p>${r.notes.map((n) => `<div class="card"><strong>${esc(new Date(n.at).toLocaleString())} · ${esc(n.author)}</strong>${["history", "allergies", "medicines", "plan"].map((k) => `<p style="white-space:pre-wrap"><b>${k}:</b> ${esc(n[k]) || "—"}</p>`).join("")}</div>`).join("")}<h3>Medicines dispensed</h3>${
+          (data.state.dispenses || [])
+            .filter((b) =>
+              data.state.patients.some(
+                (a) => a.id === b.appointmentId && a.recordId === r.id,
+              ),
+            )
+            .map(
+              (b) =>
+                `<p>${esc(b.number)} · ${esc(new Date(b.at).toLocaleDateString())}: ${b.items.map((i) => `${esc(i.name)} (${esc(i.batch)}) × ${i.quantity} ${esc(i.unit)}`).join(", ")}</p>`,
+            )
+            .join("") ||
+          '<p class="small">No visible dispensing records. Enable Dispensary to record issued medicines.</p>'
+        }<div class="divider"></div><form id="care-form" data-action="note-add">${hidden}${["history", "allergies", "medicines", "plan"].map((k) => `<label>${{ history: "Health history / visit notes", allergies: "Allergies reported", medicines: "Medicines and instructions recorded by clinician", plan: "Follow-up / corrections" }[k]}<textarea name="${k}" maxlength="${k === "history" ? 4000 : k === "allergies" ? 1000 : 2000}" rows="3"></textarea></label>`).join("")}${end}`
+      : `<p>Confirm the patient’s identity. Shared phone numbers do not automatically combine records.</p><form id="care-form" data-action="record-create">${hidden}${field("Patient reference / identifying detail (optional)", "reference", "", "text", 'maxlength="100"')}<div class="error"></div><div class="form-actions"><button class="primary">Create new patient record</button></div></form>${records.length ? `<div class="divider"></div><form id="care-form" data-action="record-link">${hidden}<label>Or link a returning patient<select name="recordId">${records.map((r) => `<option value="${r.id}">${esc(r.name)} · ${esc(r.phone)} · ${esc(r.reference)} · ${r.id.slice(0, 8)}</option>`).join("")}</select></label><label class="check"><input type="checkbox" required> I checked this is the same person</label>${end}` : ""}`,
+  );
+}
+function dispensaryPage() {
+  const s = data.state;
+  return (
+    heading(
+      "Dispensary & medicine bills",
+      "Stock is tracked by batch. Prices are in INR. Receipts do not calculate GST.",
+      me.role === "owner"
+        ? btn("Add stock batch", "medicine-form", "primary")
+        : "",
+    ) +
+    `<div class="card"><h2>Stock batches</h2><div class="tablewrap"><table><thead><tr><th>Medicine / batch</th><th>Expiry</th><th>Available</th><th>Unit price</th></tr></thead><tbody>${(s.medicines || []).map((m) => `<tr><td>${esc(m.name)}<br>${esc(m.batch)}</td><td>${esc(m.expiry)} ${m.expiry < today() ? "EXPIRED" : ""}</td><td>${m.stock} ${esc(m.unit)}</td><td>${money(m.pricePaise)}</td></tr>`).join("")}</tbody></table></div></div><div class="card"><h2>Dispense for an appointment</h2><p class="small">Confirm the patient and clinician’s instructions before issuing medicines. Saving deducts stock and creates a bill.</p><form id="dispense-form"><label>Patient / appointment<select name="appointmentId" required>${[
+      ...s.patients,
+    ]
+      .reverse()
+      .map(
+        (p) =>
+          `<option value="${p.id}">${esc(p.name)} · ${esc(p.date)} · ${esc(p.token)}</option>`,
+      )
+      .join("")}</select></label>${(s.medicines || [])
+      .filter((m) => m.stock > 0 && m.expiry >= today())
+      .map((m) =>
+        field(
+          `${esc(m.name)} · ${esc(m.batch)} · ${money(m.pricePaise)} / ${esc(m.unit)}`,
+          `qty_${m.id}`,
+          0,
+          "number",
+          `min="0" max="${m.stock}" step="1"`,
+        ),
+      )
+      .join(
+        "",
+      )}<p id="bill-total" aria-live="polite">Total: ₹0.00</p><label>Payment<select name="payment"><option value="unpaid">Unpaid</option><option value="paid">Paid — received manually</option></select></label><label class="check"><input type="checkbox" required> I verified the patient, medicines and quantities</label><div class="error"></div><div class="form-actions"><button class="primary">Dispense & create bill</button></div></form></div><div class="card"><h2>Dispensing & billing history</h2>${
+      [...(s.dispenses || [])]
+        .reverse()
+        .map(
+          (b) =>
+            `<div class="row"><span>${esc(b.number)} · ${esc(b.patientName)}<br>${money(b.totalPaise)} · ${esc(b.payment)}</span><div>${btn("Receipt", "receipt", "", `data-id="${b.id}"`)}${b.payment === "unpaid" ? btn("Record payment", "bill-paid", "", `data-id="${b.id}"`) : ""}</div></div><div class="divider"></div>`,
+        )
+        .join("") || "<p>No medicines dispensed yet.</p>"
+    }</div>`
+  );
+}
+function receipt(id) {
+  const b = data.state.dispenses.find((x) => x.id === id);
+  showModal(
+    "Medicine receipt",
+    `<div id="receipt"><h2>${esc(data.state.name)}</h2><p>${esc(data.state.address)} · ${esc(data.state.phone)}</p><h3>${esc(b.number)}</h3><p>${esc(b.patientName)} · ${esc(new Date(b.at).toLocaleString())}</p><table><thead><tr><th>Medicine / batch</th><th>Quantity</th><th>Price</th><th>Amount</th></tr></thead><tbody>${b.items.map((i) => `<tr><td>${esc(i.name)} · ${esc(i.batch)}</td><td>${i.quantity} ${esc(i.unit)}</td><td>${money(i.pricePaise)}</td><td>${money(i.totalPaise)}</td></tr>`).join("")}</tbody></table><h3>Total: ${money(b.totalPaise)} · ${esc(b.payment)}</h3><p class="small">Medicine receipt only. No tax calculation. Issued by ${esc(b.author)}.</p></div>${btn("Print / save PDF", "print-receipt", "primary")}`,
+  );
+}
+function whatsappForm(id) {
+  const p = data.state.patients.find((x) => x.id === id);
+  showModal(
+    "WhatsApp reminder",
+    `<p>Check the recipient number before opening WhatsApp. You must press Send there. No delivery confirmation is recorded.</p><form id="whatsapp-form"><input type="hidden" name="appointmentId" value="${p.id}">${field("WhatsApp number with country code", "number", p.phone, "tel", 'required placeholder="919876543210"')}<label class="check"><input name="consent" type="checkbox" ${p.whatsappConsent ? "checked" : ""}> Patient agreed to WhatsApp appointment updates</label><p class="small">Uncheck and save to withdraw consent. Messages include only clinic, token, date and a private tracking link.</p><div class="error"></div><div class="form-actions"><button class="primary">Save consent & prepare reminder</button></div></form>`,
+  );
+}
+
 function shell() {
   const s = data.state;
   document.documentElement.style.setProperty("--teal", s.color);
   const tabs =
     me.role === "doctor"
-      ? ["Consultations", "Account"]
+      ? [
+          "Consultations",
+          ...(s.features?.history ? ["Health history"] : []),
+          "Account",
+        ]
       : [
           "Overview",
           "Appointments",
+          ...(s.features?.history && me.role === "owner"
+            ? ["Health history"]
+            : []),
+          ...(s.features?.dispensary ? ["Dispensary"] : []),
           "Consultations",
           ...(me.role === "owner"
             ? ["Doctors", "Staff", "Settings", "Subscription"]
@@ -163,7 +275,7 @@ function shell() {
         ];
   if (!tabs.includes(view)) view = tabs[0];
   $("#app").innerHTML =
-    `<aside class="sidebar">${brand()}<div class="clinic-chip"><strong>${esc(s.name)}</strong><span>${esc(me.role)} workspace</span></div><nav>${tabs.map((v, i) => `<button data-view="${v}" class="${view === v ? "active" : ""}"><span>${["◫", "▤", "✚", "♙", "♧", "⚙", "◈", "○"][i % 8]}</span> ${v}</button>`).join("")}</nav><div class="sidebar-bottom"><div class="small">${badge(s.plan.name)}<p style="margin-top:10px">Know your turn.<br>Arrive on time.</p></div>${btn("↪ Sign out", "logout")}</div></aside><div class="main"><header class="topbar">${statusBar()}<div class="user"><span class="user-circle">${esc(me.name.slice(0, 1))}</span><span>${esc(me.name)} · ${esc(me.role)}</span>${btn("Sign out", "logout", "", 'title="Sign out"')}</div></header><main class="page">${{ Overview: overview, Appointments: appointments, Consultations: consultations, Doctors: doctors, Staff: staffPage, Settings: settings, Subscription: subscription, Account: account, Platform: platform }[view]()}<footer class="footer"><span>ClinicSync · Know your turn. Arrive on time.</span><span>All times IST · Estimates may change · Pilot release</span></footer></main></div>`;
+    `<aside class="sidebar">${brand()}<div class="clinic-chip"><strong>${esc(s.name)}</strong><span>${esc(me.role)} workspace</span></div><nav>${tabs.map((v, i) => `<button data-view="${v}" class="${view === v ? "active" : ""}"><span>${["◫", "▤", "✚", "♙", "♧", "⚙", "◈", "○"][i % 8]}</span> ${v}</button>`).join("")}</nav><div class="sidebar-bottom"><div class="small">${badge(s.plan.name)}<p style="margin-top:10px">Know your turn.<br>Arrive on time.</p></div>${btn("↪ Sign out", "logout")}</div></aside><div class="main"><header class="topbar">${statusBar()}<div class="user"><span class="user-circle">${esc(me.name.slice(0, 1))}</span><span>${esc(me.name)} · ${esc(me.role)}</span>${btn("Sign out", "logout", "", 'title="Sign out"')}</div></header><main class="page">${{ "Health history": carePage, Dispensary: dispensaryPage, Overview: overview, Appointments: appointments, Consultations: consultations, Doctors: doctors, Staff: staffPage, Settings: settings, Subscription: subscription, Account: account, Platform: platform }[view]()}<footer class="footer"><span>ClinicSync · Know your turn. Arrive on time.</span><span>All times IST · Estimates may change · Pilot release</span></footer></main></div>`;
 }
 function overview() {
   const s = data.state,
@@ -206,7 +318,7 @@ function appointments() {
       "Every arrival, one shared queue.",
       btn("+ Add patient", "add-patient", "primary"),
     ) +
-    `<div class="card"><div class="toolbar"><input id="search" aria-label="Search patients" placeholder="Search name or token" value="${esc(search)}"><input id="date" aria-label="Appointment date" type="date" value="${selectedDate}" style="max-width:170px"><select id="doctor-filter" aria-label="Filter doctor">${doctorOptions(true)}</select><select id="status-filter" aria-label="Filter status">${["All", "waiting", "serving", "completed", "cancelled", "no-show"].map((s) => `<option ${s === filter ? "selected" : ""}>${s}</option>`).join("")}</select></div><div class="tablewrap"><table><thead><tr><th>Token</th><th>Patient</th><th>Doctor</th><th>Arrival</th><th>Status</th><th>Actions</th></tr></thead><tbody>${patients.map((p) => `<tr><td><strong>${p.token}</strong>${p.priority ? " " + badge("Priority", "orange") : ""}</td><td>${esc(p.name)}<br><span class="small">${esc(p.type)}</span></td><td>${esc(data.state.doctors.find((d) => d.id === p.doctorId)?.name)}</td><td>${p.arrived ? "✓ Checked in" : "Expected"}</td><td>${badge(p.status)}</td><td><div class="flex">${btn("Tracking link", "copy-ticket", "", 'data-id="' + p.id + '"')}${p.status === "waiting" ? `${!p.arrived ? btn("Check in", "checkin", "", 'data-id="' + p.id + '"') : ""}${btn("Priority", "priority", "", 'data-id="' + p.id + '"')}${btn("No-show", "noshow", "", 'data-id="' + p.id + '"')}${btn("Cancel", "cancel", "danger", 'data-id="' + p.id + '"')}` : p.status === "no-show" ? btn("Recall", "recall", "", 'data-id="' + p.id + '"') : ""}</div></td></tr>`).join("")}</tbody></table></div>${patients.length ? "" : empty("No appointments here", "Choose another date or add a patient.")}</div>`
+    `<div class="card"><div class="toolbar"><input id="search" aria-label="Search patients" placeholder="Search name or token" value="${esc(search)}"><input id="date" aria-label="Appointment date" type="date" value="${selectedDate}" style="max-width:170px"><select id="doctor-filter" aria-label="Filter doctor">${doctorOptions(true)}</select><select id="status-filter" aria-label="Filter status">${["All", "waiting", "serving", "completed", "cancelled", "no-show"].map((s) => `<option ${s === filter ? "selected" : ""}>${s}</option>`).join("")}</select></div><div class="tablewrap"><table><thead><tr><th>Token</th><th>Patient</th><th>Doctor</th><th>Arrival</th><th>Status</th><th>Actions</th></tr></thead><tbody>${patients.map((p) => `<tr><td><strong>${p.token}</strong>${p.priority ? " " + badge("Priority", "orange") : ""}</td><td>${esc(p.name)}<br><span class="small">${esc(p.type)}</span></td><td>${esc(data.state.doctors.find((d) => d.id === p.doctorId)?.name)}</td><td>${p.arrived ? "✓ Checked in" : "Expected"}</td><td>${badge(p.status)}</td><td><div class="flex">${careButtons(p)}${btn("Tracking link", "copy-ticket", "", 'data-id="' + p.id + '"')}${p.status === "waiting" ? `${!p.arrived ? btn("Check in", "checkin", "", 'data-id="' + p.id + '"') : ""}${btn("Priority", "priority", "", 'data-id="' + p.id + '"')}${btn("No-show", "noshow", "", 'data-id="' + p.id + '"')}${btn("Cancel", "cancel", "danger", 'data-id="' + p.id + '"')}` : p.status === "no-show" ? btn("Recall", "recall", "", 'data-id="' + p.id + '"') : ""}</div></td></tr>`).join("")}</tbody></table></div>${patients.length ? "" : empty("No appointments here", "Choose another date or add a patient.")}</div>`
   );
 }
 function consultations() {
@@ -266,7 +378,18 @@ function settings() {
       "Make ClinicSync your own.",
       "Your branding appears on booking, patient and display screens.",
     ) +
-    `<form id="settings" class="grid"><div class="card"><h2>Clinic details</h2><div class="divider"></div><div class="formgrid">${field("Clinic name", "name", s.name, "text", 'required maxlength="80"')}${field("Contact phone", "phone", s.phone, "tel", 'maxlength="30"')}<div class="full">${field("Address", "address", s.address, "text", 'maxlength="200"')}</div>${field("Opening hours", "hours", s.hours, "text", 'maxlength="80"')}${field("Brand colour", "color", s.color, "color")}<div class="full"><label class="check"><input name="publicBooking" type="checkbox" ${s.publicBooking ? "checked" : ""}> Allow patients to book through the public link</label><p class="small">Bookings use a daily queue; doctor hours are displayed as information, not individual time slots.</p></div></div><div class="error" id="form-error"></div><div class="form-actions"><button class="primary" type="submit">Save clinic settings</button></div></div><div class="stack"><div class="card"><h2>Your logo</h2><div class="divider"></div><img id="logo-preview" class="logo-preview" src="${s.logo || "icon.svg"}" alt="Logo preview"><label style="margin-top:18px">Upload logo<input id="logo-file" type="file" accept="image/png,image/jpeg,image/webp"></label><p class="small" style="margin-top:8px">PNG, JPEG or WebP · maximum 100 KB</p>${btn("Remove logo", "remove-logo", "text-button")}</div><div class="card"><h2>Booking link</h2><div class="linkbox">${esc(bookingUrl())}</div><p class="small">Clinic URL: ${esc(data.slug)} · fixed after registration</p></div><div class="card"><h3>Display access</h3><p class="small">If a display link has been shared accidentally, replace it. Existing display links will stop working.</p><div class="quicklinks">${btn("Replace display links", "rotate-display", "danger")}</div></div></div></form>`
+    `<div class="card"><h2>Optional features</h2><p class="small">Disabled by default. Turning a feature off hides it without deleting saved records. Health notes are restricted to the owner and assigned doctors.</p><form id="care-form" data-action="features">${[
+      ["whatsapp", "Manual WhatsApp reminders"],
+      ["history", "Patient health history"],
+      ["dispensary", "Dispensary stock and medicine billing"],
+    ]
+      .map(
+        ([k, label]) =>
+          `<label class="check"><input name="${k}" type="checkbox" ${s.features?.[k] ? "checked" : ""}> ${label}</label>`,
+      )
+      .join(
+        "",
+      )}<div class="error"></div><div class="form-actions"><button class="primary">Save optional features</button></div></form></div><form id="settings" class="grid"><div class="card"><h2>Clinic details</h2><div class="divider"></div><div class="formgrid">${field("Clinic name", "name", s.name, "text", 'required maxlength="80"')}${field("Contact phone", "phone", s.phone, "tel", 'maxlength="30"')}<div class="full">${field("Address", "address", s.address, "text", 'maxlength="200"')}</div>${field("Opening hours", "hours", s.hours, "text", 'maxlength="80"')}${field("Brand colour", "color", s.color, "color")}<div class="full"><label class="check"><input name="publicBooking" type="checkbox" ${s.publicBooking ? "checked" : ""}> Allow patients to book through the public link</label><p class="small">Bookings use a daily queue; doctor hours are displayed as information, not individual time slots.</p></div></div><div class="error" id="form-error"></div><div class="form-actions"><button class="primary" type="submit">Save clinic settings</button></div></div><div class="stack"><div class="card"><h2>Your logo</h2><div class="divider"></div><img id="logo-preview" class="logo-preview" src="${s.logo || "icon.svg"}" alt="Logo preview"><label style="margin-top:18px">Upload logo<input id="logo-file" type="file" accept="image/png,image/jpeg,image/webp"></label><p class="small" style="margin-top:8px">PNG, JPEG or WebP · maximum 100 KB</p>${btn("Remove logo", "remove-logo", "text-button")}</div><div class="card"><h2>Booking link</h2><div class="linkbox">${esc(bookingUrl())}</div><p class="small">Clinic URL: ${esc(data.slug)} · fixed after registration</p></div><div class="card"><h3>Display access</h3><p class="small">If a display link has been shared accidentally, replace it. Existing display links will stop working.</p><div class="quicklinks">${btn("Replace display links", "rotate-display", "danger")}</div></div></div></form>`
   );
 }
 function subscription() {
@@ -495,6 +618,39 @@ document.addEventListener("click", async (e) => {
     id = b.dataset.id;
   if (!a) return;
   try {
+    if (a === "health") {
+      healthForm(id);
+      return;
+    }
+    if (a === "whatsapp") {
+      whatsappForm(id);
+      return;
+    }
+    if (a === "receipt") {
+      receipt(id);
+      return;
+    }
+    if (a === "print-receipt") {
+      window.print();
+      return;
+    }
+    if (a === "bill-paid") {
+      if (!confirm("Confirm you received payment for this bill?")) return;
+      await api("/care", {
+        action: "bill-paid",
+        billId: id,
+        requestId: crypto.randomUUID(),
+      });
+      await refresh(true);
+      return;
+    }
+    if (a === "medicine-form") {
+      showModal(
+        "Add stock batch",
+        `<form id="care-form" data-action="medicine-add">${field("Medicine name and strength", "name", "", "text", 'required maxlength="100"')}${field("Batch number", "batch", "", "text", 'required maxlength="60"')}${field("Stock unit (tablet, bottle, etc.)", "unit", "tablet", "text", 'required maxlength="30"')}${field("Expiry date", "expiry", "", "date", 'required min="' + today() + '"')}${field("Quantity received", "stock", 1, "number", 'required min="1" max="100000"')}${field("Selling price per unit (INR)", "price", 0, "number", 'required min="0" step="0.01" max="1000000"')}<div class="error"></div><div class="form-actions"><button class="primary">Save stock batch</button></div></form>`,
+      );
+      return;
+    }
     if (a === "auth-toggle") {
       signUp = !signUp;
       authScreen();
@@ -649,6 +805,51 @@ document.addEventListener("submit", async (e) => {
   if (button) button.disabled = true;
   try {
     switch (f.id) {
+      case "care-form": {
+        const payload = { ...b, action: f.dataset.action };
+        if (payload.action === "features")
+          for (const k of ["whatsapp", "history", "dispensary"])
+            payload[k] = b[k] === "on";
+        await api("/care", payload);
+        $("#modal").close();
+        await refresh(true);
+        notify("Saved.");
+        break;
+      }
+      case "dispense-form": {
+        const items = Object.entries(b)
+          .filter(([k, v]) => k.startsWith("qty_") && Number(v) > 0)
+          .map(([k, v]) => ({ id: k.slice(4), quantity: Number(v) }));
+        const result = await api("/care", { ...b, action: "dispense", items });
+        await refresh(true);
+        receipt(result.billId);
+        break;
+      }
+      case "whatsapp-form": {
+        let number = b.number.replace(/[\s()+-]/g, "");
+        if (number.length === 10) number = "91" + number;
+        if (b.consent === "on" && !/^[1-9][0-9]{7,14}$/.test(number))
+          throw new Error("Enter a valid international WhatsApp number.");
+        await api("/care", {
+          action: "whatsapp-consent",
+          appointmentId: b.appointmentId,
+          consent: b.consent === "on",
+          requestId: b.requestId,
+        });
+        const p = data.state.patients.find((p) => p.id === b.appointmentId);
+        if (b.consent !== "on") {
+          $("#modal").close();
+          await refresh(true);
+          notify("WhatsApp consent withdrawn.");
+          break;
+        }
+        const message = `Hello! Your appointment at ${data.state.name} is on ${p.date}. Your token is ${p.token}. Check your latest queue status: ${patientUrl(p)}. Waiting times may change. Contact reception if you need help.`;
+        showModal(
+          "Review WhatsApp reminder",
+          `<p>Recipient: <strong>${esc(number)}</strong></p><p style="white-space:pre-wrap">${esc(message)}</p><a class="button primary" target="_blank" rel="noopener noreferrer" href="https://wa.me/${number}?text=${encodeURIComponent(message)}">Open WhatsApp</a><p class="small">Press Send in WhatsApp. Opening this link does not confirm sending or delivery.</p>`,
+        );
+        break;
+      }
       case "auth":
         await api("/auth/" + (signUp ? "register" : "login"), b);
         me = await api("/me");
@@ -805,3 +1006,16 @@ setInterval(() => {
     refresh();
 }, 10000);
 boot();
+
+document.addEventListener("input", (e) => {
+  const form = e.target.closest("#dispense-form");
+  if (!form) return;
+  const total = (data.state.medicines || []).reduce(
+    (sum, m) =>
+      sum +
+      Math.max(0, Number(form.elements.namedItem("qty_" + m.id)?.value) || 0) *
+        m.pricePaise,
+    0,
+  );
+  form.querySelector("#bill-total").textContent = "Total: " + money(total);
+});

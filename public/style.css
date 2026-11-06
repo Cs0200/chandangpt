@@ -977,3 +977,29 @@ dialog h2 {
     white-space: nowrap;
   }
 }
+textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #dce5e1;
+  border-radius: 10px;
+  font: inherit;
+  resize: vertical;
+}
+@media print {
+  body:has(#receipt) #app,
+  body:has(#receipt) #toast {
+    display: none !important;
+  }
+  body:has(#receipt) dialog {
+    position: static;
+    max-width: none;
+    width: 100%;
+    border: 0;
+    box-shadow: none;
+    max-height: none;
+    overflow: visible;
+  }
+  body:has(#receipt) dialog > :not(#receipt) {
+    display: none !important;
+  }
+}

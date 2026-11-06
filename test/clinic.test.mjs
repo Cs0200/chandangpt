@@ -475,3 +475,222 @@ test("saved clinic and session survive database close/reopen", async () => {
   db.raw.close();
   rmSync(dir, { recursive: true });
 });
+
+test("optional care modules enforce access, preserve history, and atomically bill stock", async () => {
+  const { request: r, env } = setup(),
+    a = await register(r),
+    c = a.cookie;
+  await addDoctor(r, c);
+  const state = () => r("/clinic", { cookie: c }).then((x) => x.body.state);
+  const d = (await state()).doctors[0];
+  const p = (
+    await act(r, c, {
+      action: "book",
+      doctorId: d.id,
+      date: day(),
+      name: "Fictional Patient",
+      phone: "9999999999",
+    })
+  ).body.patient;
+  const care = (b, cookie = c) =>
+    r("/care", { cookie, body: { requestId: crypto.randomUUID(), ...b } });
+  assert.equal(
+    (await care({ action: "record-create", appointmentId: p.id })).status,
+    403,
+  );
+  await care({
+    action: "features",
+    history: true,
+    dispensary: true,
+    whatsapp: true,
+  });
+  await care({
+    action: "record-create",
+    appointmentId: p.id,
+    reference: "TEST ONLY",
+  });
+  await care({
+    action: "note-add",
+    appointmentId: p.id,
+    history: "private clinical note",
+    medicines: "Recorded medicine",
+  });
+  assert.equal((await state()).records[0].notes.length, 1);
+  const staff = await r("/staff", {
+    cookie: c,
+    body: {
+      name: "Reception",
+      email: "reception@example.test",
+      password: "Test-password-123",
+      role: "reception",
+    },
+  });
+  assert.equal(staff.status, 201);
+  const rc = (
+    await r("/auth/login", {
+      body: { email: "reception@example.test", password: "Test-password-123" },
+    })
+  ).cookie;
+  assert.equal(
+    (await r("/clinic", { cookie: rc })).body.state.records,
+    undefined,
+  );
+  assert.equal(
+    (
+      await care(
+        { action: "note-add", appointmentId: p.id, history: "forbidden" },
+        rc,
+      )
+    ).status,
+    403,
+  );
+  const other = await register(r, "other");
+  assert.equal(
+    (
+      await care(
+        { action: "whatsapp-consent", appointmentId: p.id, consent: true },
+        other.cookie,
+      )
+    ).status,
+    403,
+  );
+  await care({
+    action: "medicine-add",
+    name: "Test medicine",
+    batch: "B1",
+    unit: "tablet",
+    expiry: day(Date.now() + 86400000),
+    stock: 5,
+    price: "1.25",
+  });
+  const m = (await state()).medicines[0];
+  const payload = {
+    action: "dispense",
+    appointmentId: p.id,
+    items: [{ id: m.id, quantity: 3 }],
+    payment: "unpaid",
+  };
+  const results = await Promise.all([care(payload, rc), care(payload, rc)]);
+  assert.deepEqual(results.map((x) => x.status).sort(), [200, 400]);
+  assert.equal((await state()).medicines[0].stock, 2);
+  assert.equal((await state()).dispenses[0].totalPaise, 375);
+  const requestId = crypto.randomUUID();
+  const sale = { ...payload, items: [{ id: m.id, quantity: 1 }], requestId };
+  await care(sale);
+  await care(sale);
+  assert.equal((await state()).medicines[0].stock, 1);
+  assert.equal(
+    (await care({ ...payload, items: [{ id: m.id, quantity: -1 }] })).status,
+    400,
+  );
+  const bill = (await state()).dispenses[0];
+  await care({ action: "bill-paid", billId: bill.id }, rc);
+  assert.equal((await state()).dispenses[0].payment, "paid");
+  const publicResult = await r("/public/clinic-one/ticket", {
+    body: { key: p.key },
+  });
+  assert.ok(
+    !JSON.stringify(publicResult.body).includes("private clinical note"),
+  );
+  assert.ok(!JSON.stringify(publicResult.body).includes("Recorded medicine"));
+  await care({ action: "features" });
+  assert.equal((await state()).records, undefined);
+  assert.equal((await care(payload)).status, 403);
+  await care({ action: "features", history: true });
+  assert.equal((await state()).records[0].notes.length, 1);
+});
+
+test("doctor health access stays scoped and expired batches cannot be issued", async () => {
+  const { careAction, filterCare } = await import("../src/care.mjs");
+  const s = fresh("Clinic"),
+    owner = { role: "owner", name: "Owner" },
+    now = Date.now();
+  for (const [name, prefix] of [
+    ["Dr One", "A"],
+    ["Dr Two", "B"],
+  ])
+    apply(
+      s,
+      {
+        action: "doctor",
+        name,
+        prefix,
+        specialty: "General",
+        hours: "10–14",
+        minutes: 8,
+        capacity: 10,
+        enabled: true,
+      },
+      owner,
+      now,
+    );
+  const p1 = book(
+      s,
+      { doctorId: s.doctors[0].id, name: "Patient One", date: day(now) },
+      now,
+    ),
+    p2 = book(
+      s,
+      { doctorId: s.doctors[1].id, name: "Patient Two", date: day(now) },
+      now,
+    );
+  careAction(
+    s,
+    { action: "features", history: true, dispensary: true },
+    owner,
+    now,
+  );
+  careAction(s, { action: "record-create", appointmentId: p1.id }, owner, now);
+  careAction(s, { action: "record-create", appointmentId: p2.id }, owner, now);
+  const doc = { role: "doctor", doctor_id: s.doctors[0].id, name: "Dr One" };
+  assert.throws(
+    () =>
+      careAction(
+        s,
+        { action: "note-add", appointmentId: p2.id, history: "no" },
+        doc,
+        now,
+      ),
+    /denied/,
+  );
+  assert.throws(
+    () => careAction(s, { action: "features", history: true }, doc, now),
+    /Owner/,
+  );
+  const view = structuredClone(s);
+  view.patients = view.patients.filter((p) => p.doctorId === doc.doctor_id);
+  filterCare(view, doc);
+  assert.equal(view.records.length, 1);
+  assert.equal(view.records[0].id, p1.recordId);
+  careAction(
+    s,
+    {
+      action: "medicine-add",
+      name: "Test batch",
+      batch: "expiry",
+      unit: "tablet",
+      expiry: day(now),
+      stock: 3,
+      price: "0.10",
+    },
+    owner,
+    now,
+  );
+  assert.throws(
+    () =>
+      careAction(
+        s,
+        {
+          action: "dispense",
+          appointmentId: p1.id,
+          items: [{ id: s.medicines[0].id, quantity: 1 }],
+          payment: "paid",
+        },
+        owner,
+        now + 86400000,
+      ),
+    /Expired/,
+  );
+  assert.equal(s.medicines[0].stock, 3);
+  assert.equal(s.dispenses.length, 0);
+});
